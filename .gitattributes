@@ -1,0 +1,4 @@
+# Force LF on all shell scripts so they run on Linux/Pi even when authored on Windows.
+* text=auto eol=lf
+*.sh text eol=lf
+*.md text eol=lf

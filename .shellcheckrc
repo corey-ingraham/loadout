@@ -1,0 +1,8 @@
+# loadout shellcheck config
+# SC1090/SC1091: dynamic/unfollowable `source` paths are intentional (lib + manifests).
+disable=SC1090,SC1091
+# SC2086: we deliberately leave $SUDO unquoted so it expands to nothing when root.
+disable=SC2086
+# Target bash (arrays, associative arrays, [[ ]]).
+shell=bash
+external-sources=true
