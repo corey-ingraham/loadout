@@ -221,9 +221,12 @@ apt_update_once() {
 ensure_bootstrap_deps() {
     log "Installing bootstrap dependencies ..."
     apt_update_once
+    # apt-transport-https and software-properties-common are intentionally omitted:
+    # apt has HTTPS support built in, and both were removed in Debian 13 (trixie) —
+    # requesting them makes this single apt-get abort the entire bootstrap.
     run $SUDO apt-get install -y -qq \
-        ca-certificates gnupg curl wget apt-transport-https \
-        software-properties-common lsb-release coreutils \
+        ca-certificates gnupg curl wget \
+        lsb-release coreutils \
         || die "Failed to install bootstrap dependencies."
     ok "Bootstrap dependencies present."
 }
@@ -259,7 +262,9 @@ PRESEED
     ok "debconf preseeded."
 }
 
-# apt_install <label> <pkg...> : batch install; records success/failure.
+# apt_install <label> <pkg...> : batch install; on failure retry per-package so one
+# renamed/absent package (common across Debian releases) can't sink the whole group.
+# Returns 0 if >=1 package installed, 1 if none — callers may chain a fallback with ||.
 apt_install() {
     local label="$1"; shift
     [ "$#" -eq 0 ] && return 0
@@ -267,10 +272,26 @@ apt_install() {
     if run $SUDO apt-get install -y -qq --no-install-recommends "$@"; then
         ok "apt: $label"
         INSTALLED_OK+=("$label")
-    else
-        err "apt: $label (one or more of: $*)"
-        FAILED_ITEMS+=("$label (apt)")
+        return 0
     fi
+    warn "apt: $label batch failed; retrying per-package ..."
+    local pkg _ok=0 _miss=""
+    for pkg in "$@"; do
+        if run $SUDO apt-get install -y -qq --no-install-recommends "$pkg"; then
+            _ok=$((_ok + 1))
+        else
+            _miss="$_miss $pkg"
+        fi
+    done
+    if [ "$_ok" -eq 0 ]; then
+        err "apt: $label (none installable:$_miss)"
+        FAILED_ITEMS+=("$label (apt)")
+        return 1
+    fi
+    ok "apt: $label ($_ok installed${_miss:+; unavailable:$_miss})"
+    INSTALLED_OK+=("$label")
+    [ -n "$_miss" ] && FAILED_ITEMS+=("$label unavailable:$_miss")
+    return 0
 }
 
 # =============================================================================
@@ -407,10 +428,18 @@ enable_kali_repo() {
     printf 'deb [signed-by=%s] https://http.kali.org/kali kali-rolling main contrib non-free non-free-firmware\n' \
         "$KALI_KEY" | run $SUDO tee "$KALI_LIST" >/dev/null
     # Pin EVERYTHING from kali-rolling low so nothing installs unless we ask by name.
+    # Also HARD-BLOCK kali-defaults (priority -1): it reconfigures the whole host
+    # (prompt, sysctl, MOTD, users) and its preinst FAILS on non-Kali Debian, wedging
+    # dpkg with "Unmet dependencies" for every later install. Blocking it makes packages
+    # that hard-depend on it (e.g. seclists, wordlists) fail cleanly instead.
     cat <<PIN | run $SUDO tee "$KALI_PIN" >/dev/null
 Package: *
 Pin: release o=Kali
 Pin-Priority: 50
+
+Package: kali-defaults kali-tweaks
+Pin: release *
+Pin-Priority: -1
 PIN
     APT_UPDATED=0; apt_update_once
     NEED_KALI=1
@@ -422,10 +451,9 @@ kali_install() {
     local label="$1"; shift
     enable_kali_repo || { SKIPPED_ITEMS+=("$label (kali repo unavailable)"); return 1; }
     if run $SUDO apt-get install -y -qq -t kali-rolling "$@"; then
-        ok "kali: $label"; INSTALLED_OK+=("$label")
-    else
-        err "kali: $label"; FAILED_ITEMS+=("$label (kali)")
+        ok "kali: $label"; INSTALLED_OK+=("$label"); return 0
     fi
+    err "kali: $label"; FAILED_ITEMS+=("$label (kali)"); return 1
 }
 
 disable_kali_repo() {
