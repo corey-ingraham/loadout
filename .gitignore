@@ -21,3 +21,6 @@ downloads/
 Thumbs.db
 *.swp
 *~
+
+# Machine-local subagent memory (never committed)
+.claude/agent-memory-local/
