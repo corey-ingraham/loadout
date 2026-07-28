@@ -1,0 +1,23 @@
+# Secrets / credentials — never commit
+*.env
+.env*
+secrets/
+*.key
+*.pem
+id_*
+!id_*.pub
+.mcp.json
+.claude/settings.local.json
+
+# Runtime / local artifacts
+loadout.log
+*.log
+tmp/
+build/
+downloads/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
